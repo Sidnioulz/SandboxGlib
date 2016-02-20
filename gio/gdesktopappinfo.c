@@ -27,6 +27,9 @@
 #include <errno.h>
 #include <string.h>
 #include <unistd.h>
+#ifdef HAVE_LIBXFCE4UI
+#include <libxfce4ui/libxfce4ui.h>
+#endif
 
 #ifdef HAVE_CRT_EXTERNS_H
 #include <crt_externs.h>
@@ -2687,6 +2690,14 @@ g_desktop_app_info_launch_uris_with_spawn (GDesktopAppInfo            *info,
   char **argv, **envp;
   int argc;
   ChildSetupData data;
+#ifdef HAVE_LIBXFCE4UI
+  GdkScreen *screen = NULL;
+  int sn_workspace;
+  char **new_argv;
+  size_t index, n;
+  char *ws_name;
+  gboolean isFirejail = FALSE;
+#endif
 
   g_return_val_if_fail (info != NULL, FALSE);
 
@@ -2696,6 +2707,17 @@ g_desktop_app_info_launch_uris_with_spawn (GDesktopAppInfo            *info,
     envp = g_app_launch_context_get_environment (launch_context);
   else
     envp = g_get_environ ();
+
+#ifdef HAVE_LIBXFCE4UI
+  if (info->exec && (strncmp (info->exec, "firejail ", 9) == 0 ||
+    strncmp (info->exec, "/usr/bin/firejail ", 18) == 0 ||
+    strncmp (info->exec, "/usr/local/bin/firejail ", 24) == 0))
+    isFirejail = TRUE;
+
+  /* lookup the screen with the pointer */
+  screen = xfce_gdk_screen_get_active (NULL);
+  sn_workspace = xfce_workspace_get_active_workspace_number (screen);
+#endif
 
   do
     {
@@ -2757,6 +2779,68 @@ g_desktop_app_info_launch_uris_with_spawn (GDesktopAppInfo            *info,
 
           g_list_free_full (launched_files, g_object_unref);
         }
+
+#ifdef HAVE_LIBXFCE4UI
+      /* secure workspace support - but remember not to tamper with Firejail invocations */
+      if (!isFirejail && xfce_workspace_is_secure (sn_workspace))
+        {
+          /* new argv, starting with Firejail's locked workspace mode */
+          new_argv = g_malloc(sizeof (gchar *) * (argc + 100));
+          index = 0;
+
+          new_argv[index++] = g_strdup ("firejail");
+          new_argv[index++] = g_strdup ("--lock-workspace");
+
+          ws_name = xfce_workspace_get_workspace_name (sn_workspace);
+
+          /* find and join the identify box */
+          if (xfce_workspace_has_locked_clients (sn_workspace))
+            {
+              new_argv[index++] = g_strdup_printf ("--join=%s", ws_name);
+            }
+          /* create a new sandbox, parse all the xfconf options */
+          else
+            {
+              new_argv[index++] = g_strdup_printf ("--name=%s", ws_name);
+
+              /* network options */
+              if (!xfce_workspace_enable_network (sn_workspace))
+                  new_argv[index++] = g_strdup ("--net=none");
+              else
+                {
+                  if (xfce_workspace_fine_tuned_network (sn_workspace))
+                      new_argv[index++] = g_strdup ("--net=auto");
+
+                  if (!xfce_workspace_isolate_dbus (sn_workspace))
+                      new_argv[index++] = g_strdup ("--dbus=full");
+                }
+
+              /* overlay options */
+              if (xfce_workspace_enable_overlay (sn_workspace))
+                {
+                  if (xfce_workspace_enable_private_home (sn_workspace))
+                    new_argv[index++] = g_strdup ("--overlay-private-home");
+                  else
+                    new_argv[index++] = g_strdup ("--overlay");
+                }
+
+              /* audio options */
+              if (xfce_workspace_disable_sound (sn_workspace))
+                {
+                  new_argv[index++] = g_strdup ("--nosound");
+                }
+            }
+
+          g_free (ws_name);
+          /* now, inject the argv parameters and set argv to point to our own pointer */
+          for (n = 0; argv[n]; n++)
+              new_argv[index++] = g_strdup (argv[n]);
+          new_argv[index] = NULL;
+
+          g_strfreev (argv);
+          argv = new_argv;
+        }
+#endif
 
       if (!g_spawn_async (info->path,
                           argv,
@@ -3152,6 +3236,11 @@ g_desktop_app_info_launch_uris_internal (GAppInfo                   *appinfo,
                                          gpointer                    pid_callback_data,
                                          GError                     **error)
 {
+#ifdef HAVE_LIBXFCE4UI
+  GdkScreen *screen = NULL;
+  int sn_workspace;
+  gboolean isFirejail = FALSE;
+#endif
   GDesktopAppInfo *info = G_DESKTOP_APP_INFO (appinfo);
   GDBusConnection *session_bus;
   gboolean success = TRUE;
@@ -3160,7 +3249,21 @@ g_desktop_app_info_launch_uris_internal (GAppInfo                   *appinfo,
 
   _log_zeitgeist_event_launch (appinfo, uris);
 
+  #ifdef HAVE_LIBXFCE4UI
+  if (info->exec && (strncmp (info->exec, "firejail ", 9) == 0 ||
+    strncmp (info->exec, "/usr/bin/firejail ", 18) == 0 ||
+    strncmp (info->exec, "/usr/local/bin/firejail ", 24) == 0))
+    isFirejail = TRUE;
+
+  /* lookup the screen with the pointer */
+  screen = xfce_gdk_screen_get_active (NULL);
+  sn_workspace = xfce_workspace_get_active_workspace_number (screen);
+
+  // only use the DBus call to the app action if the app is not to be sandboxed
+  if (session_bus && info->app_id && (isFirejail || !xfce_workspace_is_secure (sn_workspace)))
+#else
   if (session_bus && info->app_id)
+#endif
     g_desktop_app_info_launch_uris_with_dbus (info, session_bus, uris, launch_context);
   else
     success = g_desktop_app_info_launch_uris_with_spawn (info, session_bus, info->exec, uris, launch_context,
@@ -4854,6 +4957,11 @@ g_desktop_app_info_launch_action (GDesktopAppInfo   *info,
                                   GAppLaunchContext *launch_context)
 {
   GDBusConnection *session_bus;
+#ifdef HAVE_LIBXFCE4UI
+  GdkScreen *screen = NULL;
+  int sn_workspace;
+  gboolean isFirejail = FALSE;
+#endif
 
   g_return_if_fail (G_IS_DESKTOP_APP_INFO (info));
   g_return_if_fail (action_name != NULL);
@@ -4861,7 +4969,21 @@ g_desktop_app_info_launch_action (GDesktopAppInfo   *info,
 
   session_bus = g_bus_get_sync (G_BUS_TYPE_SESSION, NULL, NULL);
 
+#ifdef HAVE_LIBXFCE4UI
+  if (info->exec && (strncmp (info->exec, "firejail ", 9) == 0 ||
+    strncmp (info->exec, "/usr/bin/firejail ", 18) == 0 ||
+    strncmp (info->exec, "/usr/local/bin/firejail ", 24) == 0))
+    isFirejail = TRUE;
+
+  /* lookup the screen with the pointer */
+  screen = xfce_gdk_screen_get_active (NULL);
+  sn_workspace = xfce_workspace_get_active_workspace_number (screen);
+
+  // only use the DBus call to the app action if the app is not to be sandboxed
+  if (session_bus && info->app_id && (isFirejail || !xfce_workspace_is_secure (sn_workspace)))
+#else
   if (session_bus && info->app_id)
+#endif
     {
       gchar *object_path;
 

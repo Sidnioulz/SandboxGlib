@@ -3423,6 +3423,19 @@ AM_CONDITIONAL(HAVE_DBUS1, [test "x$have_dbus1" = "xyes"])
 AC_CHECK_PROGS([DBUS_DAEMON], [dbus-daemon])
 AM_CONDITIONAL([HAVE_DBUS_DAEMON], [test x$DBUS_DAEMON = xdbus-daemon ])
 
+# Check for libxfce4ui - which is actually depending on GLib
+#
+# Used for Xfce sandboxing features
+PKG_CHECK_MODULES(LIBXFCE4UI,
+     libxfce4ui-1 >= 4.11,
+     [AC_DEFINE(HAVE_LIBXFCE4UI, 1, [Define if libxfce4ui-1 is available]) have_libxfce4ui=yes],
+     have_libxfce4ui=no)
+AC_SUBST(LIBXFCE4UI_CFLAGS)
+AC_SUBST(LIBXFCE4UI_LIBS)
+AM_CONDITIONAL(HAVE_LIBXFCE4UI, [test "x$have_libxfce4ui" = "xyes"])
+
+
+
 dnl
 dnl Check for -Bsymbolic-functions linker flag used to avoid
 dnl intra-library PLT jumps, if available.

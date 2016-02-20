@@ -30,6 +30,10 @@ AM_CPPFLAGS = \
 
 AM_CFLAGS = $(GLIB_WARN_CFLAGS)
 
+if HAVE_LIBXFCE4UI
+  AM_CPPFLAGS += -DHAVE_LIBXFCE4UI
+endif
+
 lib_LTLIBRARIES = libgio-2.0.la
 
 gdbus_headers = 			\
@@ -500,9 +504,10 @@ libgio_2_0_la_LIBADD = \
 	$(GLIB_LIBS) 					\
 	$(XATTR_LIBS) 					\
 	$(NETWORK_LIBS)					\
+	$(LIBXFCE4UI_LIBS)					\
 	$(NULL)
 
-libgio_2_0_la_CPPFLAGS = $(ZLIB_CFLAGS) $(AM_CPPFLAGS)
+libgio_2_0_la_CPPFLAGS = $(ZLIB_CFLAGS) $(AM_CPPFLAGS) $(LIBXFCE4UI_CFLAGS)
 
 if PLATFORM_WIN32
 no_undefined = -no-undefined
