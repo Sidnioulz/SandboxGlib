@@ -12,7 +12,8 @@ LDADD = \
 	$(top_builddir)/glib/libglib-2.0.la		\
 	$(NULL)
 
-AM_CPPFLAGS = $(gio_INCLUDES) $(GLIB_DEBUG_FLAGS) -I$(top_builddir)/gio -I$(top_srcdir)/gio
+AM_CPPFLAGS = $(gio_INCLUDES) $(GLIB_DEBUG_FLAGS) -I$(top_builddir)/gio -I$(top_srcdir)/gio  $(LIBXFCE4UI_CFLAGS)
+AM_LDFLAGS =  $(LIBXFCE4UI_LIBS)
 DEFS = -DG_LOG_DOMAIN=\"GLib-GIO\" -DTEST_SERVICES=\""$(abs_top_builddir)/gio/tests/services"\"
 AM_CFLAGS = $(GLIB_WARN_CFLAGS)
 
