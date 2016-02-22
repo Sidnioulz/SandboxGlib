@@ -2709,8 +2709,11 @@ g_desktop_app_info_launch_uris_with_spawn (GDesktopAppInfo            *info,
     envp = g_get_environ ();
 
 #ifdef HAVE_LIBXFCE4UI
-  if (info->exec && (strncmp (info->exec, "firejail ", 9) == 0 ||
+  if (info->exec && (strcmp (info->exec, "firejail") == 0 ||
+    strncmp (info->exec, "firejail ", 9) == 0 ||
+    strcmp (info->exec, "/usr/bin/firejail") == 0 ||
     strncmp (info->exec, "/usr/bin/firejail ", 18) == 0 ||
+    strcmp (info->exec, "/usr/local/bin/firejail") == 0 ||
     strncmp (info->exec, "/usr/local/bin/firejail ", 24) == 0))
     isFirejail = TRUE;
 
@@ -3250,8 +3253,11 @@ g_desktop_app_info_launch_uris_internal (GAppInfo                   *appinfo,
   _log_zeitgeist_event_launch (appinfo, uris);
 
   #ifdef HAVE_LIBXFCE4UI
-  if (info->exec && (strncmp (info->exec, "firejail ", 9) == 0 ||
+  if (info->exec && (strcmp (info->exec, "firejail") == 0 ||
+    strncmp (info->exec, "firejail ", 9) == 0 ||
+    strcmp (info->exec, "/usr/bin/firejail") == 0 ||
     strncmp (info->exec, "/usr/bin/firejail ", 18) == 0 ||
+    strcmp (info->exec, "/usr/local/bin/firejail") == 0 ||
     strncmp (info->exec, "/usr/local/bin/firejail ", 24) == 0))
     isFirejail = TRUE;
 
@@ -4970,11 +4976,13 @@ g_desktop_app_info_launch_action (GDesktopAppInfo   *info,
   session_bus = g_bus_get_sync (G_BUS_TYPE_SESSION, NULL, NULL);
 
 #ifdef HAVE_LIBXFCE4UI
-  if (info->exec && (strncmp (info->exec, "firejail ", 9) == 0 ||
+  if (info->exec && (strcmp (info->exec, "firejail") == 0 ||
+    strncmp (info->exec, "firejail ", 9) == 0 ||
+    strcmp (info->exec, "/usr/bin/firejail") == 0 ||
     strncmp (info->exec, "/usr/bin/firejail ", 18) == 0 ||
+    strcmp (info->exec, "/usr/local/bin/firejail") == 0 ||
     strncmp (info->exec, "/usr/local/bin/firejail ", 24) == 0))
     isFirejail = TRUE;
-
   /* lookup the screen with the pointer */
   screen = xfce_gdk_screen_get_active (NULL);
   sn_workspace = xfce_workspace_get_active_workspace_number (screen);
