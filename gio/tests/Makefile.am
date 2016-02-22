@@ -259,10 +259,7 @@ test_extra_programs += \
 	dbus-launch				\
 	$(NULL)
 
-# Uninstalled because of the check-for-executable logic in DesktopAppInfo unable to find the installed executable
 uninstalled_test_programs += \
-	appinfo					\
-	desktop-app-info			\
 	$(NULL)
 
 home_desktop_files = \
@@ -304,13 +301,7 @@ dist_test_data += \
 	$(addprefix desktop-files/home/applications/,$(home_desktop_files))
 
 dist_test_data += \
-	appinfo-test-actions.desktop		\
-	appinfo-test-gnome.desktop		\
-	appinfo-test-notgnome.desktop		\
-	appinfo-test.desktop			\
-	appinfo-test2.desktop			\
 	file.c					\
-	org.gtk.test.dbusappinfo.desktop	\
 	x-content/image-dcf/DCIM/Camera/20130831_203925.jpg \
 	x-content/image-dcf/DCIM/Camera/20130831_203928.jpg \
 	x-content/unix-software/autorun.sh 	\
@@ -318,7 +309,6 @@ dist_test_data += \
 	$(NULL)
 
 test_extra_programs += \
-	appinfo-test				\
 	apps					\
 	$(NULL)
 
@@ -422,7 +412,6 @@ test_programs += \
 
 gdbus_proxy_threads_CFLAGS = $(AM_CFLAGS) $(DBUS1_CFLAGS)
 actions_SOURCES                          = $(gdbus_sessionbus_sources) actions.c
-dbus_appinfo_SOURCES                     = $(gdbus_sessionbus_sources) dbus-appinfo.c
 gapplication_SOURCES                     = $(gdbus_sessionbus_sources) gapplication.c
 gdbus_auth_SOURCES                       = $(gdbus_sessionbus_sources) gdbus-auth.c
 gdbus_bz627724_SOURCES                   = $(gdbus_sessionbus_sources) gdbus-bz627724.c
