@@ -3423,32 +3423,18 @@ AM_CONDITIONAL(HAVE_DBUS1, [test "x$have_dbus1" = "xyes"])
 AC_CHECK_PROGS([DBUS_DAEMON], [dbus-daemon])
 AM_CONDITIONAL([HAVE_DBUS_DAEMON], [test x$DBUS_DAEMON = xdbus-daemon ])
 
-# Check for libxfconf - which is actually depending on GLib
+# Check for libxfce4ui - which is actually depending on GLib
 #
 # Used for Xfce sandboxing features
-PKG_CHECK_MODULES(XFCONF,
-     libxfconf-0 >= 4.12,
-     [AC_DEFINE(HAVE_XFCONF, 1, [Define if libxfconf-0 is available]) have_xfconf=yes],
-     have_xfconf=no)
-AC_SUBST(XFCONF_CFLAGS)
-AC_SUBST(XFCONF_LIBS)
-AM_CONDITIONAL(HAVE_XFCONF, [test "x$have_xfconf" = "xyes"])
+PKG_CHECK_MODULES(LIBXFCE4UI,
+     libxfce4ui-1 >= 4.11,
+     [AC_DEFINE(HAVE_LIBXFCE4UI, 1, [Define if libxfce4ui-1 is available]) have_libxfce4ui=yes],
+     have_libxfce4ui=no)
+AC_SUBST(LIBXFCE4UI_CFLAGS)
+AC_SUBST(LIBXFCE4UI_LIBS)
+AM_CONDITIONAL(HAVE_LIBXFCE4UI, [test "x$have_libxfce4ui" = "xyes"])
 
-PKG_CHECK_MODULES(FIREJAILUTIL,
-     libexechelperutils >= 0.9.29,
-     [AC_DEFINE(HAVE_FIREJAILUTIL, 1, [Define if libexechelperutils is available]) have_firejail=yes],
-     have_firejail=no)
-AC_SUBST(FIREJAILUTIL_CFLAGS)
-AC_SUBST(FIREJAILUTIL_LIBS)
-AM_CONDITIONAL(HAVE_FIREJAILUTIL, [test "x$have_firejail" = "xyes"])
 
-PKG_CHECK_MODULES(LIBNOTIFY,
-     libnotify >= 0.7,
-     [AC_DEFINE(HAVE_LIBNOTIFY, 1, [Define if libnotify is available]) have_libnotify=yes],
-     have_libnotify=no)
-AC_SUBST(LIBNOTIFY_CFLAGS)
-AC_SUBST(LIBNOTIFY_LIBS)
-AM_CONDITIONAL(HAVE_LIBNOTIFY, [test "x$have_libnotify" = "xyes"])
 
 dnl
 dnl Check for -Bsymbolic-functions linker flag used to avoid

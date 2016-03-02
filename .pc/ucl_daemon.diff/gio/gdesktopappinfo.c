@@ -27,16 +27,8 @@
 #include <errno.h>
 #include <string.h>
 #include <unistd.h>
-
-#ifdef HAVE_XFCONF
-#include <xfconf/xfconf.h>
-#include <firejail/common.h>
-#endif
-
-#ifdef HAVE_LIBNOTIFY
-#include <libnotify/notify.h>
-#include <libnotify/notification.h>
-#include <libnotify/notify-enum-types.h>
+#ifdef HAVE_LIBXFCE4UI
+#include <libxfce4ui/libxfce4ui.h>
 #endif
 
 #ifdef HAVE_CRT_EXTERNS_H
@@ -78,27 +70,6 @@ typedef struct __ZeitgeistAppInfoFileData {
 	gchar *origin;
 	gchar *mime_type;
 } _ZeitgeistAppInfoFileData;
-
-//XXX
-typedef struct {
-  GDesktopAppInfo            *info;
-  GDBusConnection            *session_bus;
-  gchar                      *exec_line;
-  GList                      *uris;
-  GAppLaunchContext          *launch_context;
-  GSpawnFlags                 spawn_flags;
-  GSpawnChildSetupFunc        user_setup;
-  gpointer                    user_setup_data;
-  GDesktopAppLaunchCallback   pid_callback;
-  gpointer                    pid_callback_data;
-
-  gchar        *monitor_path;
-  gchar        *ws_name;
-#ifdef HAVE_LIBNOTIFY
-  NotifyNotification *notification;
-#endif
-} XfceSpawnWatchData;
-
 
 /**
  * SECTION:gdesktopappinfo
@@ -2701,491 +2672,6 @@ notify_desktop_launch (GDBusConnection  *session_bus,
 
 #define _SPAWN_FLAGS_DEFAULT (G_SPAWN_SEARCH_PATH)
 
-#ifdef HAVE_XFCONF
-static XfconfChannel *
-_channel (void)
-{
-  static gboolean       initted = FALSE;
-  static XfconfChannel *channel = NULL;
-  if (!initted)
-    {
-      GError *error = NULL;
-      xfconf_init(&error);
-      
-      if (error)
-        {
-          g_warning ("failed to get current workspace because xfconf could not be initialized: %s.", error->message);
-          g_error_free (error);
-        }
-      else
-        initted = TRUE;
-    }
-
-  if (initted && !channel)
-    {
-      channel = xfconf_channel_get ("xfwm4");
-    }
-
-  return channel;
-}
-
-static gint
-_get_active_workspace_number (void)
-{
-  XfconfChannel *channel = _channel ();
-
-  if (!channel)
-    return -1;
-
-  return xfconf_channel_get_uint (channel, "/general/current_workspace", 0);
-}
-
-static gboolean
-_workspace_is_secure (guint ws)
-{
-  XfconfChannel *channel = _channel ();
-  gchar        **labels;
-  gint           i;
-  gboolean ret = FALSE;
-
-  if (!channel)
-    return FALSE;
-
-  labels = xfconf_channel_get_string_list (channel, "/security/workspace_security_labels");
-  if (!labels) {
-    return FALSE;
-  }
-
-  for (i = 0; i < ws && labels[i] != NULL; i++);
-
-  if (i == ws)
-    ret = labels[i] && g_strcmp0 (labels[i], "")? TRUE:FALSE;
-
-  g_strfreev (labels);
-  return ret;
-}
-
-static gchar *
-_workspace_get_workspace_name (guint ws)
-{
-  XfconfChannel *channel = _channel ();
-  gchar        **labels;
-  gint           i;
-  gchar         *ret;
-
-  if (!channel)
-    return NULL;
-
-  labels = xfconf_channel_get_string_list (channel, "/general/workspace_names");
-  if (!labels)
-    return NULL;
-
-  for (i = 0; i < ws && labels[i] != NULL; i++);
-
-  if (i == ws)
-    ret = g_strdup (labels[i]);
-  else
-    ret = NULL;
-
-  g_strfreev (labels);
-  return ret;
-}
-
-static gboolean
-_workspace_has_locked_clients (guint ws)
-{
-  gboolean has_clients = FALSE;
-  gchar *ws_name = _workspace_get_workspace_name (ws);
-  pid_t result;
-
-  if (!ws_name)
-    return FALSE;
-
-  has_clients = name2pid (ws_name, &result) == 0;
-  g_free (ws_name);
-
-  return has_clients;
-}
-
-static gboolean
-_workspace_enable_network (guint ws)
-{
-  XfconfChannel *channel = _channel();
-  gchar         *prop;
-  gboolean       let;
-
-  prop = g_strdup_printf ("/security/workspace_%d/enable_network", ws);
-  let = xfconf_channel_get_bool (channel, prop, TRUE);
-  g_free (prop);
-
-  return let;
-}
-
-static gboolean
-_workspace_fine_tuned_network (guint ws)
-{
-  XfconfChannel *channel = _channel();
-  gchar         *prop;
-  gboolean       let;
-
-  prop = g_strdup_printf ("/security/workspace_%d/net_auto", ws);
-  let = xfconf_channel_get_bool (channel, prop, TRUE);
-  g_free (prop);
-
-  return let;
-}
-
-static gboolean
-_workspace_isolate_dbus (guint ws)
-{
-  XfconfChannel *channel = _channel();
-  gchar         *prop;
-  gboolean       let;
-
-  prop = g_strdup_printf ("/security/workspace_%d/isolate_dbus", ws);
-  let = xfconf_channel_get_bool (channel, prop, TRUE);
-  g_free (prop);
-
-  return let;
-}
-
-static gboolean
-_workspace_enable_overlay (guint ws)
-{
-  XfconfChannel *channel = _channel();
-  gchar         *prop;
-  gboolean       let;
-
-  prop = g_strdup_printf ("/security/workspace_%d/overlay_fs", ws);
-  let = xfconf_channel_get_bool (channel, prop, TRUE);
-  g_free (prop);
-
-  return let;
-}
-
-static gboolean
-_workspace_enable_private_home (guint ws)
-{
-  XfconfChannel *channel = _channel();
-  gchar         *prop;
-  gboolean       let;
-
-  prop = g_strdup_printf ("/security/workspace_%d/overlay_fs_private_home", ws);
-  let = xfconf_channel_get_bool (channel, prop, FALSE);
-  g_free (prop);
-
-  return let;
-}
-
-static gboolean
-_workspace_disable_sound (guint ws)
-{
-  XfconfChannel *channel = _channel();
-  gchar         *prop;
-  gboolean       let;
-
-  prop = g_strdup_printf ("/security/workspace_%d/disable_sound", ws);
-  let = xfconf_channel_get_bool (channel, prop, FALSE);
-  g_free (prop);
-
-  return let;
-}
-#endif
-
-
-
-static gboolean
-g_desktop_app_info_launch_uris_with_spawn (GDesktopAppInfo            *info,
-                                           GDBusConnection            *session_bus,
-                                           const gchar                *exec_line,
-                                           GList                      *uris,
-                                           GAppLaunchContext          *launch_context,
-                                           GSpawnFlags                 spawn_flags,
-                                           GSpawnChildSetupFunc        user_setup,
-                                           gpointer                    user_setup_data,
-                                           GDesktopAppLaunchCallback   pid_callback,
-                                           gpointer                    pid_callback_data,
-                                           GError                    **error);
-
-static void
-xfce_spawn_on_secure_workspace_ready (GFileMonitor     *monitor,
-                                      GFile            *file,
-                                      GFile            *other_file,
-                                      GFileMonitorEvent event_type,
-                                      gpointer          user_data)
-{
-  XfceSpawnWatchData *data    = (XfceSpawnWatchData *) user_data;
-  gboolean            succeed = FALSE;
-  GError             *error   = NULL;
-
-  g_return_if_fail (data != NULL);
-
-  if (event_type == G_FILE_MONITOR_EVENT_CREATED || event_type == G_FILE_MONITOR_EVENT_CHANGED)
-    {
-      succeed = g_desktop_app_info_launch_uris_with_spawn (data->info,
-                                                           data->session_bus,
-                                                           data->exec_line,
-                                                           data->uris,
-                                                           data->launch_context,
-                                                           data->spawn_flags,
-                                                           data->user_setup,
-                                                           data->user_setup_data,
-                                                           data->pid_callback,
-                                                           data->pid_callback_data,
-                                                           &error);
-
-      if (!succeed)
-        {
-          g_error ("Error: failed to spawn %s in secure workspace %s (error: %s)", data->exec_line, data->ws_name, error->message);
-          g_error_free (error);
-        }
-      else
-        {
-#ifdef HAVE_LIBNOTIFY
-          printf ("DBG: notif %p\n", data->notification);
-          if (data->notification)
-            {
-              GError *notify_error = NULL;
-              gchar *text = g_strdup_printf (_("Workspace Ready. Launching %s"), g_app_info_get_display_name (G_APP_INFO (data->info)));
-              notify_notification_update (data->notification, text, NULL, "firejail-workspaces-ready");
-          printf ("DBG: notif %s\n", text);
-              g_free (text);
-
-              if (!notify_notification_show (data->notification, &notify_error))
-              {
-          printf ("DBG: notif no show\n");
-	                g_warning ("%s: failed to notify that secure workspace %s is initialized: %s\n", G_LOG_DOMAIN, data->ws_name, notify_error->message);
-	                g_error_free (notify_error);
-              }
-          printf ("DBG: notif show done\n");
-            }
-#endif
-        }
-
-      g_signal_handlers_disconnect_by_func (monitor, xfce_spawn_on_secure_workspace_ready, data);
-      g_object_unref (monitor);
-
-      g_unlink (data->monitor_path);
-
-      g_free (data->ws_name);
-      g_free (data->monitor_path);
-      g_free (data->exec_line);
-      g_list_free_full (data->uris, g_free);
-      g_object_unref (data->info);
-      g_object_unref (data->session_bus);
-      g_object_unref (data->launch_context);
-#ifdef HAVE_LIBNOTIFY
-      if (data->notification)
-        g_object_unref (data->notification);
-#endif
-      g_slice_free (XfceSpawnWatchData, data);
-    }
-}
-
-static gchar *
-_list_g_strdup (const gchar *orig, gpointer user_data)
-{
-  return g_strdup (orig);
-}
-
-static gboolean
-xfce_spawn_secure_workspace_daemon (GDesktopAppInfo            *info,
-                                    GDBusConnection            *session_bus,
-                                    const gchar                *exec_line,
-                                    GList                      *spawn_uris,
-                                    gchar                     **envp,
-                                    GAppLaunchContext          *launch_context,
-                                    GSpawnFlags                 spawn_flags,
-                                    GSpawnChildSetupFunc        user_setup,
-                                    gpointer                    user_setup_data,
-                                    GDesktopAppLaunchCallback   pid_callback,
-                                    gpointer                    pid_callback_data,
-                                    guint                       workspace_number,
-                                    const gchar                *ws_name,
-                                    GError                    **error)
-{
-  char **new_argv, **cenvp;
-  size_t index, n, n_cenvp;
-  gchar              *new_path;
-  GPid pid;
-  gboolean            overlaying = FALSE;
-  GFileMonitor       *monitor;
-  gchar              *monitor_path;
-  XfceSpawnWatchData *data;
-
-#ifdef HAVE_LIBNOTIFY
-#if NOTIFY_CHECK_VERSION (0, 7, 0)
-  NotifyNotification *notification = notify_notification_new ("xfwm4", NULL, NULL);
-#else
-  NotifyNotification *notification = notify_notification_new ("xfwm4", NULL, NULL, NULL);
-#endif
-  gchar              *body;
-  GError             *notify_error = NULL;
-          printf ("DBG: notif init\n");
-#endif
-
-  fprintf (stderr, "DEBUG: Spawning Xfce's secure workspace daemon in workspace %d, which will keep the Firejail domain alive\n", workspace_number);
-
-#ifdef HAVE_LIBNOTIFY
-  if (!notify_is_initted ())
-      notify_init("Xfce4 UI Utilities in the GLib");
-
-  body = g_strdup_printf (_("Initializing Secure Workspace '%s'"), ws_name);
-  notify_notification_update (notification, body, NULL, "firejail-workspaces-initializing");
-          printf ("DBG: notif %s\n", body);
-  g_free (body);
-
-  if (!notify_notification_show (notification, &notify_error))
-  {
-          printf ("DBG: notif no show 1\n");
-	    g_warning ("%s: failed to notify that secure workspace %s is being initialized: %s\n", G_LOG_DOMAIN, ws_name, notify_error->message);
-	    g_error_free (notify_error);
-	    g_object_unref (notification);
-	    notification = NULL;
-  }
-          printf ("DBG: notif done 1\n");
-#endif
-
-  /* clean up path in the environment so we're confident the sandbox properly set up */
-  if (G_UNLIKELY (envp == NULL))
-    envp = (gchar **) environ;
-  for (n = 0; envp[n] != NULL; ++n);
-  cenvp = g_new0 (gchar *, n + 2);
-  for (n_cenvp = n = 0; envp[n] != NULL; ++n)
-    {
-      if (strncmp (envp[n], "DESKTOP_STARTUP_ID", 18) != 0
-          && strncmp (envp[n], "GIO_LAUNCHED_DESKTOP_FILE", 25) != 0
-          && strncmp (envp[n], "GIO_LAUNCHED_DESKTOP_FILE_PID", 29) != 0
-          && strncmp (envp[n], "PATH", 4) != 0)
-        cenvp[n_cenvp++] = envp[n];
-    }
-
-  /* add a safe path */
-  cenvp[n_cenvp++] = new_path = g_strdup ("PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/sbin:/sbin");
-
-  /* new argv, starting with Firejail's locked workspace mode */
-  new_argv = g_malloc(sizeof (gchar *) * (100));
-  index = 0;
-
-  /* create a new sandbox, parse all the xfconf options */
-  new_argv[index++] = g_strdup ("firejail");
-  new_argv[index++] = g_strdup ("--lock-workspace");
-  new_argv[index++] = g_strdup_printf ("--name=%s", ws_name);
-
-  /* network options */
-  if (!_workspace_enable_network (workspace_number))
-      new_argv[index++] = g_strdup ("--net=none");
-  else
-    {
-      if (_workspace_fine_tuned_network (workspace_number))
-          new_argv[index++] = g_strdup ("--net=auto");
-
-      if (!_workspace_isolate_dbus (workspace_number))
-          new_argv[index++] = g_strdup ("--dbus=full");
-    }
-
-  /* overlay options */
-  if (_workspace_enable_overlay (workspace_number))
-    {
-      overlaying = TRUE;
-      if (_workspace_enable_private_home (workspace_number))
-        new_argv[index++] = g_strdup ("--overlay-private-home");
-      else
-        new_argv[index++] = g_strdup ("--overlay");
-    }
-
-  /* audio options */
-  if (_workspace_disable_sound (workspace_number))
-    {
-      new_argv[index++] = g_strdup ("--nosound");
-    }
-
-  /* finally, adding the name of the daemon */
-  new_argv[index++] = g_strdup ("xfce4-secure-workspaced");
-
-  /* and the path to the file where it must report on its status */
-  if (overlaying)
-    {
-      monitor_path = g_strdup_printf ("%s/Sandboxes/%s/Users/%s/.cache/xfce4/secure-workspace.notify",
-                                      g_get_home_dir (),
-                                      ws_name,
-                                      g_get_user_name ());
-      new_argv[index++] = g_strdup_printf ("/home/%s/.cache/xfce4/secure-workspace.notify",
-                                       g_get_user_name ());
-    }
-  else
-    {
-      monitor_path = g_strdup_printf ("%s/xfce4/secure-workspace-%d.notify",
-                                      g_get_user_cache_dir (),
-                                      workspace_number);
-      new_argv[index++] = monitor_path;
-    }
-  
-  /* assuming that this would fail only because the file doesn't exist; if it
-   * fails for other reasons, we can't recover anyway */
-  g_unlink (monitor_path);
-  new_argv[index] = NULL;
-
-
-  if (!g_spawn_async (NULL,
-                      new_argv,
-                      cenvp,
-                      G_SPAWN_SEARCH_PATH_FROM_ENVP, 
-                      NULL,
-                      NULL,
-                      &pid,
-                      error))
-    {
-      g_strfreev (new_argv);
-      g_free (cenvp);
-      g_free (new_path);
-      return FALSE;
-    }
-
-  /* FIXME: arguably a poor choice */
-  if (pid_callback != NULL)
-    pid_callback (info, pid, pid_callback_data);
-
-  monitor = g_file_monitor_file (g_file_new_for_path (monitor_path),
-                                 G_FILE_MONITOR_NONE,
-                                 NULL,
-                                 error);
-
-  if (!monitor)
-    {
-      g_strfreev (new_argv);
-      g_free (cenvp);
-      g_free (new_path);
-      return FALSE;
-    }
-
-  data = g_slice_new0 (XfceSpawnWatchData);
-
-  data->info = g_object_ref (info);
-  data->exec_line = g_strdup (exec_line);
-  data->session_bus = g_object_ref (session_bus);
-  data->uris = g_list_copy_deep (spawn_uris, (GCopyFunc) _list_g_strdup, NULL);
-  data->launch_context = g_object_ref (launch_context);
-  data->spawn_flags = spawn_flags;
-  data->user_setup = user_setup;
-  data->user_setup_data = user_setup_data;
-  data->pid_callback = NULL;
-  data->pid_callback_data = NULL;
-  data->monitor_path          = monitor_path;
-  data->ws_name               = g_strdup (ws_name);
-#ifdef HAVE_LIBNOTIFY
-  data->notification          = notification;
-#endif
-
-  g_signal_connect (G_OBJECT (monitor), "changed", G_CALLBACK (xfce_spawn_on_secure_workspace_ready), data);
-
-  g_strfreev (new_argv);
-  g_free (cenvp);
-  g_free (new_path);
-
-  return TRUE;
-}  
-
 static gboolean
 g_desktop_app_info_launch_uris_with_spawn (GDesktopAppInfo            *info,
                                            GDBusConnection            *session_bus,
@@ -3204,12 +2690,13 @@ g_desktop_app_info_launch_uris_with_spawn (GDesktopAppInfo            *info,
   char **argv, **envp;
   int argc;
   ChildSetupData data;
-#ifdef HAVE_XFCONF
-  gint sn_workspace;
+#ifdef HAVE_LIBXFCE4UI
+  GdkScreen *screen = NULL;
+  int sn_workspace;
   char **new_argv;
   size_t index, n;
   char *ws_name;
-  gboolean is_firejail = FALSE;
+  gboolean isFirejail = FALSE;
 #endif
 
   g_return_val_if_fail (info != NULL, FALSE);
@@ -3221,17 +2708,18 @@ g_desktop_app_info_launch_uris_with_spawn (GDesktopAppInfo            *info,
   else
     envp = g_get_environ ();
 
-#ifdef HAVE_XFCONF
+#ifdef HAVE_LIBXFCE4UI
   if (info->exec && (strcmp (info->exec, "firejail") == 0 ||
     strncmp (info->exec, "firejail ", 9) == 0 ||
     strcmp (info->exec, "/usr/bin/firejail") == 0 ||
     strncmp (info->exec, "/usr/bin/firejail ", 18) == 0 ||
     strcmp (info->exec, "/usr/local/bin/firejail") == 0 ||
     strncmp (info->exec, "/usr/local/bin/firejail ", 24) == 0))
-    is_firejail = TRUE;
+    isFirejail = TRUE;
 
-  /* lookup the current workspace */
-  sn_workspace = _get_active_workspace_number ();
+  /* lookup the screen with the pointer */
+  screen = xfce_gdk_screen_get_active (NULL);
+  sn_workspace = xfce_workspace_get_active_workspace_number (screen);
 #endif
 
   do
@@ -3295,54 +2783,65 @@ g_desktop_app_info_launch_uris_with_spawn (GDesktopAppInfo            *info,
           g_list_free_full (launched_files, g_object_unref);
         }
 
-#ifdef HAVE_XFCONF
-      /* secure workspace support */
-      if (!is_firejail && _workspace_is_secure (sn_workspace))
+#ifdef HAVE_LIBXFCE4UI
+      /* secure workspace support - but remember not to tamper with Firejail invocations */
+      if (!isFirejail && xfce_workspace_is_secure (sn_workspace))
         {
-          fprintf (stderr, "DEBUG: Spawning %s in secure workspace %d, wrapping with Firejail\n", argv[0], sn_workspace);
+          /* new argv, starting with Firejail's locked workspace mode */
+          new_argv = g_malloc(sizeof (gchar *) * (argc + 100));
+          index = 0;
 
-          ws_name = _workspace_get_workspace_name (sn_workspace);
+          new_argv[index++] = g_strdup ("firejail");
+          new_argv[index++] = g_strdup ("--lock-workspace");
 
-          /* if there are no clients yet, ensure the secure workspace daemon runs, to make the sandbox persistent */
-          if (!_workspace_has_locked_clients (sn_workspace))
+          ws_name = xfce_workspace_get_workspace_name (sn_workspace);
+
+          /* find and join the identify box */
+          if (xfce_workspace_has_locked_clients (sn_workspace))
             {
-              completed = xfce_spawn_secure_workspace_daemon (info, session_bus, exec_line, launched_uris, envp,
-                                                              launch_context, spawn_flags, user_setup, user_setup_data,
-                                                              pid_callback, pid_callback_data, sn_workspace, ws_name, error);
-              if (completed)
-                {
-                  
-                }
-              else
-                {
-                  g_error ("Error: failed to spawn the secure workspace daemon in secure workspace %s (error: %s)", ws_name, (*error)->message);
-                  fprintf (stderr, "DEBUG: Failed to spawn the secure workspace daemon for %s\n", ws_name);
-                }
-
-              return completed;
+              new_argv[index++] = g_strdup_printf ("--join=%s", ws_name);
             }
+          /* create a new sandbox, parse all the xfconf options */
           else
             {
-              fprintf (stderr, "DEBUG: Joining the existing Firejail domain '%s'\n", ws_name);
+              new_argv[index++] = g_strdup_printf ("--name=%s", ws_name);
 
-              /* new argv, starting with Firejail's locked workspace mode */
-              new_argv = g_malloc(sizeof (gchar *) * (argc + 100));
-              index = 0;
+              /* network options */
+              if (!xfce_workspace_enable_network (sn_workspace))
+                  new_argv[index++] = g_strdup ("--net=none");
+              else
+                {
+                  if (xfce_workspace_fine_tuned_network (sn_workspace))
+                      new_argv[index++] = g_strdup ("--net=auto");
 
-              new_argv[index++] = g_strdup ("firejail");
-              new_argv[index++] = g_strdup ("--lock-workspace");
-              new_argv[index++] = g_strdup_printf ("--join=%s", ws_name);
+                  if (!xfce_workspace_isolate_dbus (sn_workspace))
+                      new_argv[index++] = g_strdup ("--dbus=full");
+                }
 
-              /* now, inject the argv parameters and set argv to point to our own pointer */
-              for (n = 0; argv[n]; n++)
-                  new_argv[index++] = g_strdup (argv[n]);
-              new_argv[index] = NULL;
+              /* overlay options */
+              if (xfce_workspace_enable_overlay (sn_workspace))
+                {
+                  if (xfce_workspace_enable_private_home (sn_workspace))
+                    new_argv[index++] = g_strdup ("--overlay-private-home");
+                  else
+                    new_argv[index++] = g_strdup ("--overlay");
+                }
 
-              g_strfreev (argv);
-              argv = new_argv;
+              /* audio options */
+              if (xfce_workspace_disable_sound (sn_workspace))
+                {
+                  new_argv[index++] = g_strdup ("--nosound");
+                }
             }
-          
+
           g_free (ws_name);
+          /* now, inject the argv parameters and set argv to point to our own pointer */
+          for (n = 0; argv[n]; n++)
+              new_argv[index++] = g_strdup (argv[n]);
+          new_argv[index] = NULL;
+
+          g_strfreev (argv);
+          argv = new_argv;
         }
 #endif
 
@@ -3363,7 +2862,6 @@ g_desktop_app_info_launch_uris_with_spawn (GDesktopAppInfo            *info,
 
           goto out;
         }
-
 
       if (pid_callback != NULL)
         pid_callback (info, pid, pid_callback_data);
@@ -3741,9 +3239,10 @@ g_desktop_app_info_launch_uris_internal (GAppInfo                   *appinfo,
                                          gpointer                    pid_callback_data,
                                          GError                     **error)
 {
-#ifdef HAVE_XFCONF
-  gint sn_workspace;
-  gboolean is_firejail = FALSE;
+#ifdef HAVE_LIBXFCE4UI
+  GdkScreen *screen = NULL;
+  int sn_workspace;
+  gboolean isFirejail = FALSE;
 #endif
   GDesktopAppInfo *info = G_DESKTOP_APP_INFO (appinfo);
   GDBusConnection *session_bus;
@@ -3753,20 +3252,21 @@ g_desktop_app_info_launch_uris_internal (GAppInfo                   *appinfo,
 
   _log_zeitgeist_event_launch (appinfo, uris);
 
-  #ifdef HAVE_XFCONF
+  #ifdef HAVE_LIBXFCE4UI
   if (info->exec && (strcmp (info->exec, "firejail") == 0 ||
     strncmp (info->exec, "firejail ", 9) == 0 ||
     strcmp (info->exec, "/usr/bin/firejail") == 0 ||
     strncmp (info->exec, "/usr/bin/firejail ", 18) == 0 ||
     strcmp (info->exec, "/usr/local/bin/firejail") == 0 ||
     strncmp (info->exec, "/usr/local/bin/firejail ", 24) == 0))
-    is_firejail = TRUE;
+    isFirejail = TRUE;
 
   /* lookup the screen with the pointer */
-  sn_workspace = _get_active_workspace_number ();
+  screen = xfce_gdk_screen_get_active (NULL);
+  sn_workspace = xfce_workspace_get_active_workspace_number (screen);
 
   // only use the DBus call to the app action if the app is not to be sandboxed
-  if (session_bus && info->app_id && (is_firejail || !_workspace_is_secure (sn_workspace)))
+  if (session_bus && info->app_id && (isFirejail || !xfce_workspace_is_secure (sn_workspace)))
 #else
   if (session_bus && info->app_id)
 #endif
@@ -5463,9 +4963,10 @@ g_desktop_app_info_launch_action (GDesktopAppInfo   *info,
                                   GAppLaunchContext *launch_context)
 {
   GDBusConnection *session_bus;
-#ifdef HAVE_XFCONF
-  gint sn_workspace;
-  gboolean is_firejail = FALSE;
+#ifdef HAVE_LIBXFCE4UI
+  GdkScreen *screen = NULL;
+  int sn_workspace;
+  gboolean isFirejail = FALSE;
 #endif
 
   g_return_if_fail (G_IS_DESKTOP_APP_INFO (info));
@@ -5474,19 +4975,20 @@ g_desktop_app_info_launch_action (GDesktopAppInfo   *info,
 
   session_bus = g_bus_get_sync (G_BUS_TYPE_SESSION, NULL, NULL);
 
-#ifdef HAVE_XFCONF
+#ifdef HAVE_LIBXFCE4UI
   if (info->exec && (strcmp (info->exec, "firejail") == 0 ||
     strncmp (info->exec, "firejail ", 9) == 0 ||
     strcmp (info->exec, "/usr/bin/firejail") == 0 ||
     strncmp (info->exec, "/usr/bin/firejail ", 18) == 0 ||
     strcmp (info->exec, "/usr/local/bin/firejail") == 0 ||
     strncmp (info->exec, "/usr/local/bin/firejail ", 24) == 0))
-    is_firejail = TRUE;
+    isFirejail = TRUE;
   /* lookup the screen with the pointer */
-  sn_workspace = _get_active_workspace_number ();
+  screen = xfce_gdk_screen_get_active (NULL);
+  sn_workspace = xfce_workspace_get_active_workspace_number (screen);
 
   // only use the DBus call to the app action if the app is not to be sandboxed
-  if (session_bus && info->app_id && (is_firejail || !_workspace_is_secure (sn_workspace)))
+  if (session_bus && info->app_id && (isFirejail || !xfce_workspace_is_secure (sn_workspace)))
 #else
   if (session_bus && info->app_id)
 #endif

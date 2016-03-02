@@ -1,3 +1,10 @@
+glib2.0 (2.46.2-1ubuntu1ppa3) wily; urgency=medium
+
+  * Xfce4 Secure Workspace daemon
+  * Xfconf and libnotify deps rather than GTK deps
+
+ -- Steve Dodier-Lazaro <sidnioulz@gmail.com>  Wed, 2 Mar 2016 13:19:20 +0000
+
 glib2.0 (2.46.2-1ubuntu1ppa2) wily; urgency=medium
 
   * Extra GAppInfo functions related to file support

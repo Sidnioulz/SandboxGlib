@@ -15,7 +15,9 @@ Build-Depends: debhelper (>= 9),
                libpcre3-dev (>= 1:8.35),
                desktop-file-utils,
                libzeitgeist-dev,
-               libxfce4ui-1-dev,
+               libnotify-dev,
+               firejail,
+               libxfconf-0-dev,
                gtk-doc-tools (>= 1.20),
                libselinux1-dev [linux-any],
                linux-libc-dev [linux-any],
@@ -59,7 +61,7 @@ Description: GLib library of C routines
 Package: libglib@APIVER@-tests
 Architecture: any
 Depends: ${misc:Depends},
-         ${shlibs:Depends},
+         ${shlibs:Depends}, firejail
          shared-mime-info
 Pre-Depends: ${misc:Pre-Depends}
 Description: GLib library of C routines - installed tests
