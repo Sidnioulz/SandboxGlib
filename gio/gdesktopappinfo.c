@@ -3393,6 +3393,7 @@ g_desktop_app_info_launch_uris_with_spawn (GDesktopAppInfo            *info,
                        g_key_file_get_boolean (info->keyfile, G_KEY_FILE_DESKTOP_GROUP, XFCE_FIREJAIL_RUN_IN_SANDBOX_KEY, NULL) : XFCE_FIREJAIL_RUN_IN_SANDBOX_DEFAULT;
       if (!_workspace_is_secure (sn_workspace) && sandboxed)
         {
+          gsize i;
           const gchar    *profile;
           gboolean        enable_network;
           gint            fs_mode;
@@ -3440,7 +3441,7 @@ g_desktop_app_info_launch_uris_with_spawn (GDesktopAppInfo            *info,
                 new_argv[index++] = g_strdup ("--overlay-disposable");
             }
  
-          for (gsize i = 0; fs_sync_folders && fs_sync_folders[i]; i++)
+          for (i = 0; fs_sync_folders && fs_sync_folders[i]; i++)
             new_argv[index++] = g_strdup_printf ("--overlay-sync=%s", fs_sync_folders[i]);
           g_strfreev (fs_sync_folders);
 
