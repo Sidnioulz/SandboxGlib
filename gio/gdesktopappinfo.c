@@ -3186,6 +3186,38 @@ xfce_spawn_secure_workspace_daemon (GDesktopAppInfo            *info,
   return TRUE;
 }
 
+#ifdef HAVE_XFCONF
+static gchar *
+xfce_get_firejail_profile_for_name (const gchar *name)
+{
+  gchar *profiletxt, *pathtxt;
+  struct stat s;
+
+  g_return_val_if_fail (name != NULL, NULL);
+
+  pathtxt = g_strdup_printf ("%s/firejail/%s.profile", g_get_user_config_dir (), name);
+
+  if (stat (pathtxt, &s) == 0)
+    {
+      profiletxt = g_strdup_printf ("--profile=%s", pathtxt);
+      g_free (pathtxt);
+      return profiletxt;
+    }
+
+  g_free (pathtxt);
+  pathtxt = g_strdup_printf ("/etc/firejail/%s.profile", name);
+
+  if (stat (pathtxt, &s) == 0)
+    {
+      profiletxt = g_strdup_printf ("--profile=%s", pathtxt);
+      g_free (pathtxt);
+      return profiletxt;
+    }
+
+  g_free (pathtxt);
+  return NULL;
+}
+
 static gboolean
 xfce_client_is_xfce (gchar *client)
 {
@@ -3222,6 +3254,29 @@ xfce_client_is_xfce (gchar *client)
            g_strcmp0 (name, "xfwm4-settings") == 0;
 }
 
+#ifndef XFCE_FIREJAIL_WIDGET_CONSTANTS
+#define XFCE_FIREJAIL_WIDGET_CONSTANTS
+typedef enum {
+  FS_PRIV_NONE = 0,
+  FS_PRIV_FULL = 1,
+  FS_PRIV_READ_ONLY = 2,
+  FS_PRIV_PRIVATE = 4
+} FsPrivMode;
+
+#define XFCE_FIREJAIL_RUN_IN_SANDBOX_KEY     "X-XfceSandboxWithFirejail"
+#define XFCE_FIREJAIL_PROFILE_KEY            "X-XfceFirejailProfile"
+#define XFCE_FIREJAIL_ENABLE_NETWORK_KEY     "X-XfceFirejailEnableNetwork"
+#define XFCE_FIREJAIL_FS_MODE_KEY            "X-XfceFirejailFsMode"
+#define XFCE_FIREJAIL_DISPOSABLE_KEY         "X-XfceFirejailOverlayDisposable"
+#define XFCE_FIREJAIL_FS_SYNC_FOLDERS_KEY    "X-XfceFirejailSyncFolders"
+
+#define XFCE_FIREJAIL_RUN_IN_SANDBOX_DEFAULT FALSE
+#define XFCE_FIREJAIL_ENABLE_NETWORK_DEFAULT TRUE
+#define XFCE_FIREJAIL_DISPOSABLE_DEFAULT     FALSE
+#define XFCE_FIREJAIL_FS_MODE_DEFAULT        FS_PRIV_FULL
+#endif
+#endif
+
 static gboolean
 g_desktop_app_info_launch_uris_with_spawn (GDesktopAppInfo            *info,
                                            GDBusConnection            *session_bus,
@@ -3241,6 +3296,7 @@ g_desktop_app_info_launch_uris_with_spawn (GDesktopAppInfo            *info,
   int argc;
   ChildSetupData data;
 #ifdef HAVE_XFCONF
+  gboolean sandboxed;
   gint sn_workspace;
   char **new_argv;
   size_t index, n;
@@ -3332,8 +3388,72 @@ g_desktop_app_info_launch_uris_with_spawn (GDesktopAppInfo            *info,
         }
 
 #ifdef HAVE_XFCONF
+      /* sandboxed app support */
+      sandboxed = g_key_file_has_key (info->keyfile, G_KEY_FILE_DESKTOP_GROUP, XFCE_FIREJAIL_RUN_IN_SANDBOX_KEY, NULL)?
+                       g_key_file_get_boolean (info->keyfile, G_KEY_FILE_DESKTOP_GROUP, XFCE_FIREJAIL_RUN_IN_SANDBOX_KEY, NULL) : XFCE_FIREJAIL_RUN_IN_SANDBOX_DEFAULT;
+      if (!_workspace_is_secure (sn_workspace) && sandboxed)
+        {
+          const gchar    *profile;
+          gboolean        enable_network;
+          gint            fs_mode;
+          gboolean        fs_disposable;
+          gchar         **fs_sync_folders;
+
+          profile = g_key_file_get_string (info->keyfile, G_KEY_FILE_DESKTOP_GROUP, XFCE_FIREJAIL_PROFILE_KEY, NULL);
+          enable_network = g_key_file_has_key (info->keyfile, G_KEY_FILE_DESKTOP_GROUP, XFCE_FIREJAIL_ENABLE_NETWORK_KEY, NULL)?
+                           g_key_file_get_boolean (info->keyfile, G_KEY_FILE_DESKTOP_GROUP, XFCE_FIREJAIL_ENABLE_NETWORK_KEY, NULL) : XFCE_FIREJAIL_ENABLE_NETWORK_DEFAULT;
+          fs_mode = g_key_file_has_key (info->keyfile, G_KEY_FILE_DESKTOP_GROUP, XFCE_FIREJAIL_FS_MODE_KEY, NULL)?
+                           g_key_file_get_integer (info->keyfile, G_KEY_FILE_DESKTOP_GROUP, XFCE_FIREJAIL_FS_MODE_KEY, NULL) : XFCE_FIREJAIL_FS_MODE_DEFAULT;
+          fs_disposable = g_key_file_has_key (info->keyfile, G_KEY_FILE_DESKTOP_GROUP, XFCE_FIREJAIL_DISPOSABLE_KEY, NULL)?
+                           g_key_file_get_boolean (info->keyfile, G_KEY_FILE_DESKTOP_GROUP, XFCE_FIREJAIL_DISPOSABLE_KEY, NULL) : XFCE_FIREJAIL_DISPOSABLE_DEFAULT;
+          fs_sync_folders = g_key_file_get_string_list (info->keyfile, G_KEY_FILE_DESKTOP_GROUP, XFCE_FIREJAIL_FS_SYNC_FOLDERS_KEY, NULL, NULL);
+
+          /* new argv, starting with Firejail's locked workspace mode */
+          new_argv = g_malloc(sizeof (gchar *) * (argc + 100));
+          index = 0;
+        
+          new_argv[index++] = g_strdup ("firejail");
+          new_argv[index++] = g_strdup_printf ("--name=%s", g_app_info_get_name (G_APP_INFO (info)));
+
+          if (profile)
+            {
+              gchar *profile_str = xfce_get_firejail_profile_for_name (profile);
+              if (profile_str)
+                  new_argv[index++] = profile_str;
+            }
+
+          if (enable_network)
+            new_argv[index++] = g_strdup ("--net=auto");
+          else
+            new_argv[index++] = g_strdup ("--net=none");
+
+          if (fs_mode == FS_PRIV_READ_ONLY)
+            {
+              new_argv[index++] = g_strdup ("--overlay-home");
+              if (fs_disposable)
+                new_argv[index++] = g_strdup ("--overlay-disposable");
+            }
+          else if (fs_mode == FS_PRIV_PRIVATE)
+            {
+              new_argv[index++] = g_strdup ("--overlay-private-home");
+              if (fs_disposable)
+                new_argv[index++] = g_strdup ("--overlay-disposable");
+            }
+ 
+          for (gsize i = 0; fs_sync_folders && fs_sync_folders[i]; i++)
+            new_argv[index++] = g_strdup_printf ("--overlay-sync=%s", fs_sync_folders[i]);
+          g_strfreev (fs_sync_folders);
+
+          /* now, inject the argv parameters and set argv to point to our own pointer */
+          for (n = 0; argv[n]; n++)
+              new_argv[index++] = g_strdup (argv[n]);
+          new_argv[index] = NULL;
+
+          g_strfreev (argv);
+          argv = new_argv;
+        }
       /* secure workspace support */
-      if (!is_firejail && _workspace_is_secure (sn_workspace) && !xfce_client_is_xfce (argv[0]))
+      else if (!is_firejail && _workspace_is_secure (sn_workspace) && !xfce_client_is_xfce (argv[0]))
         {
           fprintf (stderr, "DEBUG: Spawning %s in secure workspace %d, wrapping with Firejail\n", argv[0], sn_workspace);
 
