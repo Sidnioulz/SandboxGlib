@@ -3101,7 +3101,8 @@ xfce_spawn_secure_workspace_daemon (GDesktopAppInfo            *info,
     }
 
   /* finally, adding the name of the daemon */
-  new_argv[index++] = g_strdup ("xfce4-secure-workspaced");
+  new_argv[index++] = g_strdup ("xfce4-sandboxd");
+  new_argv[index++] = g_strdup (ws_name);
 
   /* and the path to the file where it must report on its status */
   if (overlaying)
